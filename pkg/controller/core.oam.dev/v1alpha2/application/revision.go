@@ -280,7 +280,7 @@ func ComputeAppRevisionHash(appRevision *v1beta1.ApplicationRevision) (string, e
 		}
 		appRevisionHash.ComponentDefinitionHash[key] = hash
 	}
-	for key, td := range appRevision.Spec.TraitDefinitions {
+	for key, td := range filterSkipAffectAppRevTraitDefinitions(appRevision.Spec.TraitDefinitions) {
 		hash, err := utils.ComputeSpecHash(&td.Spec)
 		if err != nil {
 			return "", err
@@ -343,9 +343,20 @@ func (h *AppHandler) currentAppRevIsNew(ctx context.Context) (bool, bool, error)
 		return true, true, nil
 	}
 
+	// TODO move logic to deepEqualRevision
+
+	latestAppRev := h.latestAppRev.DeepCopy()
+	currentAppRev := h.currentAppRev.DeepCopy()
+
+	latestAppRev.Spec.Application.Spec = filterSkipAffectAppRevTrait(latestAppRev.Spec.Application.Spec, latestAppRev.Spec.TraitDefinitions)
+	currentAppRev.Spec.Application.Spec = filterSkipAffectAppRevTrait(currentAppRev.Spec.Application.Spec, currentAppRev.Spec.TraitDefinitions)
+	latestAppRev.Spec.TraitDefinitions = filterSkipAffectAppRevTraitDefinitions(latestAppRev.Spec.TraitDefinitions)
+	currentAppRev.Spec.TraitDefinitions = filterSkipAffectAppRevTraitDefinitions(currentAppRev.Spec.TraitDefinitions)
+
 	// diff the latest revision first
-	if h.app.Status.LatestRevision.RevisionHash == h.currentRevHash && DeepEqualRevision(h.latestAppRev, h.currentAppRev) {
-		h.currentAppRev = h.latestAppRev.DeepCopy()
+	if h.app.Status.LatestRevision.RevisionHash == h.currentRevHash && DeepEqualRevision(latestAppRev, currentAppRev) {
+		h.currentAppRev.ObjectMeta = h.latestAppRev.ObjectMeta
+		h.currentAppRev.TypeMeta = h.latestAppRev.TypeMeta
 		return false, false, nil
 	}
 
@@ -814,6 +825,17 @@ func replaceComponentRevisionContext(u *unstructured.Unstructured, compRevName s
 		}
 	}
 	return nil
+}
+
+// before computing hash or deepEqual, filterSkipAffectAppRevTraitDefinitions filter can ignore `SkipAffectRevision` trait definition from appRev
+func filterSkipAffectAppRevTraitDefinitions(tds map[string]v1beta1.TraitDefinition) map[string]v1beta1.TraitDefinition {
+	res := make(map[string]v1beta1.TraitDefinition)
+	for key, td := range tds {
+		if !td.Spec.SkipRevisionAffect {
+			res[key] = td
+		}
+	}
+	return res
 }
 
 // before computing hash or deepEqual, filterSkipAffectAppRevTrait filter can remove `SkipAffectAppRevTrait` trait from appSpec
